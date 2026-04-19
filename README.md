@@ -1,6 +1,6 @@
 # 🚀 Sentiment Analysis
 
-PublicPulse is a real-time public sentiment intelligence platform that analyzes online discussions (Reddit, Twitter/X, News) to track how public opinion evolves over time.
+Sentiment Analysis is a real-time public sentiment intelligence platform that analyzes online discussions (Reddit, Twitter/X, News) to track how public opinion evolves over time.
 
 It combines **data engineering, NLP, and full-stack development** into a production-style project using Databricks and Antigravity.
 
@@ -177,8 +177,8 @@ pytest tests/
 
 ## 🤝 Contributors
 
+- Janhavi Bhattad
 - Rudra Solanki  
-- Janhavi  
 
 ---
 
