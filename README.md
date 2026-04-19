@@ -1,4 +1,4 @@
-# 🚀 PublicPulse
+# 🚀 Sentiment Analysis
 
 PublicPulse is a real-time public sentiment intelligence platform that analyzes online discussions (Reddit, Twitter/X, News) to track how public opinion evolves over time.
 
