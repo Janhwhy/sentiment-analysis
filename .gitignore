@@ -1,0 +1,33 @@
+# Virtual Environment
+venv/
+env/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Spark & Databricks
+spark-warehouse/
+derby.log
+metastore_db/
+.spark-staging/
+
+# Local Data Output (Keep mock inputs in data/ but ignore processing outputs)
+mnt/
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Frontend (for Phase 2)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/.env*.local
