@@ -4,6 +4,10 @@ import requests
 from datetime import datetime, timezone
 from pyspark.sql import Row
 from pyspark.sql.functions import current_timestamp, lit
+from dotenv import load_dotenv
+
+# Load local environment variables for Spark Connect / VS Code testing
+load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../backend/.env"))
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -51,7 +55,8 @@ def get_bearer_token():
         
         logger.info("Loaded API Key, API Secret, and Bearer Token from Databricks Secrets.")
         return token
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Failed to fetch from Databricks Secrets: {e}")
         token = os.environ.get("TWITTER_BEARER_TOKEN")
         if not token:
             raise EnvironmentError(
