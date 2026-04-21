@@ -7,7 +7,8 @@ from pyspark.sql.functions import current_timestamp, lit
 from dotenv import load_dotenv
 
 # Load local environment variables for Spark Connect / VS Code testing
-load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../backend/.env"))
+if "__file__" in globals():
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../backend/.env"))
 
 # ---------------------------------------------------------------------------
 # Logging
