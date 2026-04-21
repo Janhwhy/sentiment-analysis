@@ -44,9 +44,12 @@ def get_bearer_token():
     Locally / in CI: falls back to the TWITTER_BEARER_TOKEN environment variable.
     """
     try:
-        # Databricks-native secret store (no hardcoding needed)
-        token = dbutils.secrets.get(scope="publipulse", key="twitter_bearer_token")  # type: ignore[name-defined]
-        logger.info("Loaded Bearer Token from Databricks Secrets.")
+        # Databricks-native secret store using the twitter_scope we created
+        api_key = dbutils.secrets.get(scope="twitter_scope", key="api_key")  # type: ignore[name-defined]
+        api_secret = dbutils.secrets.get(scope="twitter_scope", key="api_secret")  # type: ignore[name-defined]
+        token = dbutils.secrets.get(scope="twitter_scope", key="bearer_token")  # type: ignore[name-defined]
+        
+        logger.info("Loaded API Key, API Secret, and Bearer Token from Databricks Secrets.")
         return token
     except Exception:
         token = os.environ.get("TWITTER_BEARER_TOKEN")
