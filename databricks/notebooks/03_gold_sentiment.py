@@ -29,8 +29,8 @@ def create_gold_sentiment(spark):
     logger.info("Starting Gold Layer Sentiment Inference...")
     
     try:
-        logger.info("Reading Silver cleaned posts...")
-        silver_df = spark.read.format("delta").load("mnt/delta/silver/posts_cleaned")
+        logger.info("Reading Silver cleaned posts from hive_metastore.silver.posts_cleaned...")
+        silver_df = spark.table("hive_metastore.silver.posts_cleaned")
         
         # Register UDF
         sentiment_udf = udf(mock_huggingface_inference, FloatType())
@@ -51,9 +51,10 @@ def create_gold_sentiment(spark):
         gold_df = gold_df.withColumn("_gold_processed_at", current_timestamp())
         
         # Write out to Gold analytics table
-        target_path = "mnt/delta/gold/sentiment_analytics"
-        logger.info(f"Writing derived insights to Gold Delta Table: {target_path}")
-        gold_df.write.format("delta").mode("overwrite").save(target_path)
+        target_table = "hive_metastore.gold.sentiment_analytics"
+        logger.info(f"Writing derived insights to Gold Delta Table: {target_table}")
+        spark.sql("CREATE DATABASE IF NOT EXISTS hive_metastore.gold")
+        gold_df.write.format("delta").mode("overwrite").option("mergeSchema", "true").saveAsTable(target_table)
         
         logger.info("Gold layer processing complete. Data ready for dashboard!")
         

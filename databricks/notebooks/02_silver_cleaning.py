@@ -11,10 +11,8 @@ def clean_bronze_to_silver(spark):
     
     # 1. Process Tweets (Bronze)
     try:
-        logger.info("Reading Bronze Tweets...")
-        # In a real Databricks environment, you might use: spark.table("hive_metastore.bronze.tweets")
-        # Here we use delta paths
-        tweets_df = spark.read.format("delta").load("mnt/delta/bronze/tweets")
+        logger.info("Reading Bronze Tweets from hive_metastore.bronze.tweets...")
+        tweets_df = spark.table("hive_metastore.bronze.tweets")
         
         # Clean: remove nulls in text, normalize schema
         clean_tweets = tweets_df.filter(col("text").isNotNull() & (col("text") != "")) \
@@ -47,9 +45,10 @@ def clean_bronze_to_silver(spark):
     silver_df = silver_df.withColumn("_silver_processed_at", current_timestamp())
     
     # Write to Silver layer
-    target_path = "mnt/delta/silver/posts_cleaned"
-    logger.info(f"Writing {silver_df.count()} unified records to Silver Delta Table: {target_path}")
-    silver_df.write.format("delta").mode("overwrite").save(target_path)
+    target_table = "hive_metastore.silver.posts_cleaned"
+    logger.info(f"Writing {silver_df.count()} unified records to Silver Delta Table: {target_table}")
+    spark.sql("CREATE DATABASE IF NOT EXISTS hive_metastore.silver")
+    silver_df.write.format("delta").mode("overwrite").option("mergeSchema", "true").saveAsTable(target_table)
     
     logger.info("Silver layer processing complete.")
 

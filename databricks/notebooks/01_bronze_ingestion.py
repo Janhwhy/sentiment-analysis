@@ -1,110 +1,154 @@
 import os
-import sys
 import logging
-import urllib.request
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import input_file_name, current_timestamp, lit
+import requests
+from datetime import datetime, timezone
+from pyspark.sql import Row
+from pyspark.sql.functions import current_timestamp, lit
 
-# Set up logging following production best practices
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-def setup_windows_env():
-    """Sets up winutils.exe for PySpark on Windows to prevent HADOOP_HOME crashes."""
-    if os.name == 'nt':
-        logger.info("Windows detected. Setting up mock HADOOP_HOME for local PySpark execution...")
-        current_dir = os.getcwd()
-        if os.path.basename(current_dir) == "notebooks":
-            project_root = os.path.dirname(os.path.dirname(current_dir))
-        elif os.path.basename(current_dir) == "databricks":
-            project_root = os.path.dirname(current_dir)
-        else:
-            project_root = current_dir
-            
-        hadoop_home = os.path.join(project_root, ".hadoop")
-        bin_dir = os.path.join(hadoop_home, "bin")
-        os.makedirs(bin_dir, exist_ok=True)
-        
-        winutils_path = os.path.join(bin_dir, "winutils.exe")
-        hadoop_dll_path = os.path.join(bin_dir, "hadoop.dll")
-        
-        try:
-            if not os.path.exists(winutils_path):
-                logger.info("Downloading winutils.exe...")
-                urllib.request.urlretrieve("https://raw.githubusercontent.com/cdarlint/winutils/master/hadoop-3.2.2/bin/winutils.exe", winutils_path)
-            
-            if not os.path.exists(hadoop_dll_path):
-                logger.info("Downloading hadoop.dll...")
-                urllib.request.urlretrieve("https://raw.githubusercontent.com/cdarlint/winutils/master/hadoop-3.2.2/bin/hadoop.dll", hadoop_dll_path)
-                
-            os.environ["HADOOP_HOME"] = hadoop_home
-            os.environ["PATH"] += os.pathsep + bin_dir
-            logger.info("Windows Hadoop environment configured.")
-        except Exception as e:
-            logger.warning(f"Failed to download winutils: {e}. Spark might still crash.")
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+# Topics to search — tweets matching EITHER query are ingested
+SEARCH_QUERIES = [
+    '"Women\'s Reservation Bill"',
+    '"Delimitation 2026"',
+]
+
+# Twitter API v2 recent-search endpoint
+TWITTER_SEARCH_URL = "https://api.twitter.com/2/tweets/search/recent"
+
+# Max results per query (10–100)
+MAX_RESULTS_PER_QUERY = 100
+
+# Target Databricks table
+BRONZE_TABLE = "hive_metastore.bronze.tweets"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def get_bearer_token():
+    """
+    Retrieve the Twitter Bearer Token.
+    In Databricks: pulled from dbutils secrets (recommended for production).
+    Locally / in CI: falls back to the TWITTER_BEARER_TOKEN environment variable.
+    """
+    try:
+        # Databricks-native secret store (no hardcoding needed)
+        token = dbutils.secrets.get(scope="publipulse", key="twitter_bearer_token")  # type: ignore[name-defined]
+        logger.info("Loaded Bearer Token from Databricks Secrets.")
+        return token
+    except Exception:
+        token = os.environ.get("TWITTER_BEARER_TOKEN")
+        if not token:
+            raise EnvironmentError(
+                "TWITTER_BEARER_TOKEN not found. "
+                "Set it in Databricks Secrets or as an environment variable."
+            )
+        logger.info("Loaded Bearer Token from environment variable.")
+        return token
+
+
+def fetch_tweets(query: str, bearer_token: str) -> list[dict]:
+    """
+    Call Twitter API v2 recent-search for a single query string.
+    Returns a list of tweet dicts with fields: id, created_at, text, author_id.
+    """
+    headers = {"Authorization": f"Bearer {bearer_token}"}
+    params = {
+        "query": f"{query} lang:en -is:retweet",
+        "max_results": MAX_RESULTS_PER_QUERY,
+        "tweet.fields": "id,created_at,text,author_id",
+    }
+
+    logger.info(f"Fetching tweets for query: {query}")
+    response = requests.get(TWITTER_SEARCH_URL, headers=headers, params=params, timeout=30)
+
+    if response.status_code == 200:
+        data = response.json()
+        tweets = data.get("data", [])
+        meta = data.get("meta", {})
+        logger.info(
+            f"  → Retrieved {meta.get('result_count', len(tweets))} tweets "
+            f"(newest_id={meta.get('newest_id', 'N/A')})"
+        )
+        return tweets
+    elif response.status_code == 429:
+        logger.warning("Rate limit hit (429). Try again after the window resets (15 min).")
+        return []
+    else:
+        logger.error(
+            f"Twitter API error {response.status_code} for query '{query}': {response.text}"
+        )
+        response.raise_for_status()
+
+
+# ---------------------------------------------------------------------------
+# Main ingestion logic
+# ---------------------------------------------------------------------------
 
 def main():
-    setup_windows_env()
-    
-    logger.info("Initializing Spark Session with Delta Lake support...")
-    
-    # Initialize Spark with Delta configurations
-    spark = SparkSession.builder \
-        .appName("BronzeIngestion") \
-        .config("spark.jars.packages", "io.delta:delta-spark_2.12:3.2.0") \
-        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
-        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-        .getOrCreate()
-        
-    logger.info("Spark session created successfully.")
+    bearer_token = get_bearer_token()
 
-    # Paths configuration
-    current_dir = os.getcwd()
-    if os.path.basename(current_dir) == "notebooks":
-        project_root = os.path.dirname(os.path.dirname(current_dir))
-    elif os.path.basename(current_dir) == "databricks":
-        project_root = os.path.dirname(current_dir)
-    else:
-        project_root = current_dir
-        
-    data_dir = os.path.join(project_root, "data")
-    bronze_dir = os.path.join(project_root, "mnt", "delta", "bronze")
-    
-    logger.info(f"Using data directory: {data_dir}")
-    logger.info(f"Target bronze directory: {bronze_dir}")
+    # --- Fetch from all topics, deduplicate by tweet id ---
+    all_tweets: dict[str, dict] = {}
+    for query in SEARCH_QUERIES:
+        tweets = fetch_tweets(query, bearer_token)
+        for t in tweets:
+            all_tweets[t["id"]] = t   # dict keyed by id → natural dedup
 
-    # ===== Process Tweets =====
-    tweets_path = os.path.join(data_dir, "sample_tweets.json")
-    if os.path.exists(tweets_path):
-        logger.info("Processing Twitter data...")
-        
-        # Read JSON with multiline enabled
-        tweets_df = spark.read.option("multiline", "true").json(tweets_path)
-        
-        # Add tracking metadata (Data Lineage Best Practice)
-        tweets_df = tweets_df.withColumn("_source_file", input_file_name()) \
-                             .withColumn("_loaded_at", current_timestamp()) \
-                             .withColumn("_notebook_version", lit("v1.0"))
-                             
-        # Write to Bronze layer
-        target_path = os.path.join(bronze_dir, "tweets")
-        logger.info(f"Writing Twitter data to: {target_path}")
-        
-        try:
-            tweets_df.write.format("delta").mode("overwrite").save(target_path)
-            logger.info(f"Successfully processed {tweets_df.count()} tweets to Delta Bronze layer.")
-        except Exception as e:
-             logger.error(f"Failed to write to Delta: {e}")
-             logger.info("Falling back to parquet...")
-             tweets_df.write.format("parquet").mode("overwrite").save(target_path + "_parquet")
-    else:
-        logger.warning(f"Could not find mock tweets at {tweets_path}")
+    if not all_tweets:
+        logger.warning("No tweets fetched. Exiting without writing.")
+        return
 
+    logger.info(f"Total unique tweets fetched across all topics: {len(all_tweets)}")
 
-    logger.info("Bronze ingestion complete! Phase 1 data is in the Lakehouse.")
+    # --- Convert to PySpark DataFrame ---
+    rows = [
+        Row(
+            id=t["id"],
+            created_at=t.get("created_at", ""),
+            text=t.get("text", ""),
+            author_id=t.get("author_id", ""),
+        )
+        for t in all_tweets.values()
+    ]
+
+    tweets_df = spark.createDataFrame(rows)  # type: ignore[name-defined]  — Databricks-provided global
+
+    # Add data lineage columns
+    tweets_df = (
+        tweets_df
+        .withColumn("_loaded_at", current_timestamp())
+        .withColumn("_notebook_version", lit("v2.0"))
+        .withColumn("_topic", lit(", ".join(SEARCH_QUERIES)))
+    )
+
+    # --- Write to Databricks bronze table (append so reruns don't clobber) ---
+    logger.info(f"Writing {tweets_df.count()} tweets to {BRONZE_TABLE} ...")
+
+    # Ensure the database exists
+    spark.sql("CREATE DATABASE IF NOT EXISTS hive_metastore.bronze")  # type: ignore[name-defined]
+
+    tweets_df.write \
+        .format("delta") \
+        .mode("append") \
+        .option("mergeSchema", "true") \
+        .saveAsTable(BRONZE_TABLE)
+
+    logger.info(f"✅ Successfully wrote {tweets_df.count()} tweets to {BRONZE_TABLE}.")
+    logger.info("Bronze ingestion complete — data is ready for Silver cleaning.")
+
 
 if __name__ == "__main__":
     main()
