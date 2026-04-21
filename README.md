@@ -1,6 +1,6 @@
 # 🚀 Sentiment Analysis
 
-Sentiment Analysis is a real-time public sentiment intelligence platform that analyzes online discussions (Reddit, Twitter/X, News) to track how public opinion evolves over time.
+Sentiment Analysis is a real-time public sentiment intelligence platform that analyzes online discussions (Twitter/X, News) to track how public opinion evolves over time.
 
 It combines **data engineering, NLP, and full-stack development** into a production-style project using Databricks and Antigravity.
 
@@ -10,10 +10,10 @@ It combines **data engineering, NLP, and full-stack development** into a product
 
 PublicPulse allows users to:
 
-- Search any topic (e.g. Tesla, IPL, Bitcoin)
+- Analyze public sentiment strictly on the **Women's Quota Bill and Delimitation, 2026**
 - Analyze sentiment (positive / neutral / negative)
 - Track sentiment trends over time
-- Compare platforms (Reddit vs Twitter)
+
 - Discover trending keywords
 - View viral posts
 - Generate AI-based insights
@@ -23,7 +23,7 @@ PublicPulse allows users to:
 ## 🏗️ System Architecture
 
 ```
-Data Sources (Reddit / Twitter / News)
+Data Sources (Twitter / News)
         ↓
 Antigravity (Workflow Orchestration)
         ↓
@@ -150,7 +150,7 @@ pytest tests/
 
 ## 🎯 MVP Scope
 
-- Reddit data ingestion  
+
 - Sentiment classification  
 - Basic dashboard (trend chart)  
 
